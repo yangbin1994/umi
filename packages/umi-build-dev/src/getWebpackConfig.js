@@ -2,8 +2,6 @@ import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import getConfig from 'af-webpack/getConfig';
 import { webpackHotDevClientPath } from 'af-webpack/react-dev-utils';
-import px2rem from 'postcss-plugin-px2rem';
-import { applyPlugins } from 'umi-plugin';
 import defaultBrowsers from './defaultConfigs/browsers';
 
 const debug = require('debug')('umi-build-dev:getWebpackConfig');
@@ -11,7 +9,6 @@ const debug = require('debug')('umi-build-dev:getWebpackConfig');
 export default function(service = {}) {
   const {
     cwd,
-    plugins,
     config,
     webpackRCConfig,
     babel,
@@ -28,20 +25,15 @@ export default function(service = {}) {
   // entry
   const entryScript = join(cwd, `./${paths.tmpDirPath}/${libraryName}.js`);
   const setPublicPathFile = join(__dirname, '../template/setPublicPath.js');
-  const hdFile = join(__dirname, '../template/hd/index.js');
-  const compileOnDemandFile = join(__dirname, '../template/compileOnDemand.js');
-  const initialEntry = config.hd ? [hdFile] : [];
   const entry = isDev
     ? {
         [libraryName]: [
-          ...initialEntry,
           ...(process.env.HMR === 'none' ? [] : [webpackHotDevClientPath]),
           entryScript,
-          compileOnDemandFile,
         ],
       }
     : {
-        [libraryName]: [...initialEntry, setPublicPathFile, entryScript],
+        [libraryName]: [setPublicPathFile, entryScript],
       };
 
   const pageCount = isDev ? null : Object.keys(routes).length;
@@ -81,9 +73,9 @@ export default function(service = {}) {
   // TODO: 出错处理，用户可能指定了依赖，但未指定 npm install
   const pkgPath = join(cwd, 'package.json');
   if (existsSync(pkgPath)) {
-    const { dependencies = {} } = require(pkgPath);
+    const { dependencies = {} } = require(pkgPath); // eslint-disable-line
     if (dependencies.antd) {
-      libAlias['antd'] = dirname(
+      libAlias.antd = dirname(
         require.resolve(join(cwd, 'node_modules/antd/package')),
       );
     }
@@ -95,8 +87,7 @@ export default function(service = {}) {
   }
 
   const browserslist = webpackRCConfig.browserslist || defaultBrowsers;
-
-  let webpackConfig = getConfig({
+  let afWebpackOpts = {
     cwd,
     ...webpackRCConfig,
 
@@ -110,7 +101,6 @@ export default function(service = {}) {
       presets: [[babel, { browsers: browserslist }]],
     },
     browserslist,
-    theme: { ...webpackRCConfig.theme, ...(config.hd ? { '@hd': '2px' } : {}) },
     extraResolveModules: [
       ...(webpackRCConfig.extraResolveModules || []),
       ...(extraResolveModules || []),
@@ -137,17 +127,6 @@ export default function(service = {}) {
       ...libAlias,
       ...(webpackRCConfig.alias || {}),
     },
-    extraPostCSSPlugins: [
-      ...(webpackRCConfig.extraPostCSSPlugins || []),
-      ...(config.hd
-        ? [
-            px2rem({
-              rootValue: 100,
-              minPixelValue: 2,
-            }),
-          ]
-        : []),
-    ],
     ...(isDev
       ? {
           // 生产环境的 publicPath 是服务端把 assets 发布到 cdn 后配到 HTML 里的
@@ -158,7 +137,7 @@ export default function(service = {}) {
           publicPath: webpackRCConfig.publicPath || `./${staticDirectory}/`,
           commons: webpackRCConfig.commons || [
             {
-              async: '__common',
+              async: 'common',
               children: true,
               minChunks(module, count) {
                 if (pageCount <= 2) {
@@ -176,11 +155,16 @@ export default function(service = {}) {
                 },
               }),
         }),
+  };
+  afWebpackOpts = service.applyPlugins('modifyAFWebpackOpts', {
+    initialValue: afWebpackOpts,
   });
+  debug(`afWebpackOpts: ${JSON.stringify(afWebpackOpts)}`);
 
-  // Usage:
-  // - umi-plugin-yunfengdie
-  webpackConfig = applyPlugins(plugins, 'updateWebpackConfig', webpackConfig);
+  let webpackConfig = getConfig(afWebpackOpts);
+  webpackConfig = service.applyPlugins('modifyWebpackConfig', {
+    initialValue: webpackConfig,
+  });
 
   return webpackConfig;
 }

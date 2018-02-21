@@ -1,17 +1,17 @@
 import { sync as rimraf } from 'rimraf';
 import { existsSync, renameSync } from 'fs';
 import { join } from 'path';
-import { applyPlugins } from 'umi-plugin';
 import getWebpackRCConfig, {
   watchConfigs as watchWebpackRCConfig,
   unwatchConfigs as unwatchWebpackRCConfig,
 } from 'af-webpack/getUserConfig';
+import { clearConsole } from 'af-webpack/react-dev-utils';
 import chalk from 'chalk';
 import getPaths from './getPaths';
 import getRouteConfig from './getRouteConfig';
-import { registerBabelForConfig } from './registerBabel';
-import { getConfig, watchConfigs } from './getConfig';
+import registerBabel from './registerBabel';
 import { unwatch } from './getConfig/watch';
+import UserConfig from './UserConfig';
 import getPlugins from './getPlugins';
 import getWebpackConfig from './getWebpackConfig';
 import chunksToMap from './utils/chunksToMap';
@@ -19,6 +19,7 @@ import send, { PAGE_LIST, BUILD_DONE } from './send';
 import FilesGenerator from './FilesGenerator';
 import HtmlGenerator from './HtmlGenerator';
 import createRouteMiddleware from './createRouteMiddleware';
+import PluginAPI from './PluginAPI';
 
 const debug = require('debug')('umi-build-dev:Service');
 
@@ -26,7 +27,7 @@ export default class Service {
   constructor(
     cwd,
     {
-      pluginFiles,
+      plugins: pluginFiles,
       babel,
       entryJSTpl,
       routerTpl,
@@ -54,13 +55,10 @@ export default class Service {
     this.outputPath = outputPath;
 
     this.paths = getPaths(this);
+    this.pluginMethods = {};
 
-    this.registerBabel();
-  }
-
-  registerBabel() {
-    registerBabelForConfig(this.babel, {
-      paths: this.paths,
+    registerBabel(this.babel, {
+      cwd: this.cwd,
     });
   }
 
@@ -76,6 +74,26 @@ export default class Service {
   }
 
   dev() {
+    this.initPlugins();
+
+    // 获取用户 config.js 配置
+    const userConfig = new UserConfig(this);
+    try {
+      this.config = userConfig.getConfig({ force: true });
+    } catch (e) {
+      console.error(chalk.red(e.message));
+      debug('Get config failed, watch config and reload');
+
+      // 监听配置项变更，然后重新执行 dev 逻辑
+      userConfig.watchConfigs((event, path) => {
+        debug(`[${event}] ${path}, unwatch and reload`);
+        // 重新执行 dev 逻辑
+        userConfig.unwatch();
+        this.dev();
+      });
+      return;
+    }
+
     // 获取 .webpackrc 配置
     let returnedWatchWebpackRCConfig = null;
     try {
@@ -96,28 +114,8 @@ export default class Service {
       return;
     }
 
-    // 获取用户 config.js 配置
-    let returnedWatchConfig = null;
-    try {
-      const configObj = getConfig(this.cwd, { force: true });
-      this.config = configObj.config;
-      returnedWatchConfig = configObj.watch;
-    } catch (e) {
-      console.error(chalk.red(e.message));
-      debug('Get config failed, watch config and reload');
-
-      // 监听配置项变更，然后重新执行 dev 逻辑
-      watchConfigs().on('all', (event, path) => {
-        debug(`[${event}] ${path}, unwatch and reload`);
-        // 重新执行 dev 逻辑
-        unwatch();
-        this.dev();
-      });
-      return;
-    }
-
+    this.applyPlugins('onStart');
     this.initRoutes();
-    this.initPlugins();
 
     // 生成入口文件
     const filesGenerator = new FilesGenerator(this);
@@ -148,13 +146,10 @@ export default class Service {
       isCompileDone = true;
     };
 
-    // webpackConfig.output.publicPath = '/static/';
-    require('af-webpack/dev').default({
-      webpackConfig,
-      extraMiddlewares: [
+    const extraMiddlewares = this.applyPlugins('modifyMiddlewares', {
+      initialValue: [
         createRouteMiddleware(this, {
           rebuildEntry() {
-            // return;
             if (!isCompileDone) {
               // 改写
               const defaultOnCompileDone = onCompileDone;
@@ -171,18 +166,39 @@ export default class Service {
           },
         }),
       ],
-      afterServer: devServer => {
-        this.devServer = devServer;
-        returnedWatchWebpackRCConfig(devServer, {
-          beforeChange: () => {
-            this.registerBabel();
+    });
+
+    require('af-webpack/dev').default({
+      // eslint-disable-line
+      webpackConfig,
+      extraMiddlewares,
+      beforeServer: devServer => {
+        this.applyPlugins('beforeServer', {
+          args: {
+            devServer,
           },
         });
-        returnedWatchConfig(devServer);
+      },
+      afterServer: devServer => {
+        this.devServer = devServer;
+        this.applyPlugins('afterServer', {
+          args: {
+            devServer,
+          },
+        });
+
+        returnedWatchWebpackRCConfig(devServer);
+        userConfig.setConfig(this.config);
+        userConfig.watchWithDevServer();
         filesGenerator.watch();
       },
-      onCompileDone() {
+      onCompileDone: stats => {
         onCompileDone();
+        this.applyPlugins('onCompileDone', {
+          args: {
+            stats,
+          },
+        });
       },
       proxy: this.webpackRCConfig.proxy || {},
       // 支付宝 IDE 里不自动打开浏览器
@@ -191,16 +207,49 @@ export default class Service {
   }
 
   initRoutes() {
-    this.routes = getRouteConfig(this.paths, this.config);
+    this.routes = this.applyPlugins('modifyRoutes', {
+      initialValue: getRouteConfig(this.paths, this.config),
+    });
   }
 
   initPlugins() {
+    const config = UserConfig.getConfig({
+      cwd: this.cwd,
+    });
+    debug(`user config: ${JSON.stringify(config)}`);
     this.plugins = getPlugins({
-      configPlugins: this.config.plugins,
+      configPlugins: config.plugins || [],
       pluginsFromOpts: this.pluginFiles,
       cwd: this.cwd,
       babel: this.babel,
     });
+    this.config = config;
+    debug(`plugins: ${this.plugins.map(p => p.id).join(' | ')}`);
+    this.plugins.forEach(({ id, apply, opts }) => {
+      try {
+        apply(new PluginAPI(id, this), opts);
+      } catch (e) {
+        console.error(
+          chalk.red(`Plugin ${id} initialize failed, ${e.message}`),
+        );
+        console.error(e);
+        process.exit(1);
+      }
+    });
+  }
+
+  applyPlugins(key, opts = {}) {
+    return (this.pluginMethods[key] || []).reduce((memo, { fn }) => {
+      try {
+        return fn({
+          memo,
+          args: opts.args,
+        });
+      } catch (e) {
+        console.error(chalk.red(`Plugin apply failed: ${e.message}`));
+        throw e;
+      }
+    }, opts.initialValue);
   }
 
   sendPageList() {
@@ -213,11 +262,42 @@ export default class Service {
     });
   }
 
+  reload = () => {
+    if (!this.devServer) return;
+    this.devServer.sockWrite(this.devServer.sockets, 'content-changed');
+  };
+
+  printWarn = messages => {
+    if (!this.devServer) return;
+    messages = typeof messages === 'string' ? [messages] : messages;
+    this.devServer.sockWrite(this.devServer.sockets, 'warns', messages);
+  };
+
+  printError = messages => {
+    if (!this.devServer) return;
+    messages = typeof messages === 'string' ? [messages] : messages;
+    this.devServer.sockWrite(this.devServer.sockets, 'errors', messages);
+  };
+
+  restart = why => {
+    if (!this.devServer) return;
+    clearConsole();
+    console.log(chalk.green(`Since ${why}, try to restart server`));
+    unwatch();
+    this.devServer.close();
+    process.send({ type: 'RESTART' });
+  };
+
   build() {
-    this.webpackRCConfig = this.getWebpackRCConfig().config;
-    this.config = getConfig(this.cwd).config;
-    this.initRoutes();
     this.initPlugins();
+
+    const userConfig = new UserConfig(this);
+    this.config = userConfig.getConfig();
+
+    this.webpackRCConfig = this.getWebpackRCConfig().config;
+
+    this.applyPlugins('onStart');
+    this.initRoutes();
 
     debug(`Clean tmp dir ${this.paths.tmpDirPath}`);
     rimraf(this.paths.absTmpDirPath);
@@ -231,9 +311,10 @@ export default class Service {
     this.webpackConfig = webpackConfig;
     return new Promise(resolve => {
       require('af-webpack/build').default({
+        // eslint-disable-line
         webpackConfig,
         success: ({ stats }) => {
-          if (process.env.RM_TMPDIR === 'none') {
+          if (process.env.RM_TMPDIR !== 'none') {
             debug(`Clean tmp dir ${this.paths.tmpDirPath}`);
             rimraf(this.paths.absTmpDirPath);
           }
@@ -260,11 +341,7 @@ export default class Service {
             renameSync(sourceSW, targetSW);
           }
 
-          // Usage:
-          // - umi-plugin-yunfengdie
-          applyPlugins(this.plugins, 'buildSuccess', null, {
-            service: this,
-          });
+          this.applyPlugins('buildSuccess');
           send({
             type: BUILD_DONE,
           });

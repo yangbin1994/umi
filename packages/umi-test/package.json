@@ -1,6 +1,6 @@
 {
   "name": "umi-test",
-  "version": "0.3.3",
+  "version": "0.4.2",
   "bin": {
     "umi-test": "./bin/umi-test.js"
   },
@@ -17,7 +17,6 @@
     "url": "http://github.com/umijs/umi/issues"
   },
   "scripts": {
-    "build": "DISABLE_TRANSFORM_RUNTIME=1 NODE_TARGET=1 ruban build",
     "test": "ruban test",
     "debug": "ruban debug",
     "coveralls": "ruban coveralls"
@@ -37,11 +36,12 @@
     "debug": "^3.1.0",
     "enzyme": "^3.3.0",
     "enzyme-adapter-react-16": "^1.1.1",
-    "jest-cli": "^21.2.1",
+    "identity-obj-proxy": "^3.0.0",
+    "jest-cli": "^22.1.4",
     "jsdom": "^11.5.1",
     "react": "^16.2.0",
     "react-dom": "^16.2.0",
-    "ts-jest": "^22.0.0",
+    "ts-jest-babel-7": "^22.0.6",
     "typescript": "^2.6.2"
   }
 }

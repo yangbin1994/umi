@@ -13,6 +13,9 @@ export default function(service) {
   const { cwd, tmpDirectory, outputPath, libraryName } = service;
 
   let pagesPath = 'pages';
+  if (process.env.PAGES_PATH) {
+    pagesPath = process.env.PAGES_PATH;
+  }
   if (test(join(cwd, 'src/page'))) {
     pagesPath = 'src/page';
   }
@@ -21,7 +24,6 @@ export default function(service) {
   }
   const absPagesPath = join(cwd, pagesPath);
   const absSrcPath = join(absPagesPath, '../');
-  const absLayoutPath = join(absSrcPath, 'layouts/index.js');
 
   const envAffix = process.env.NODE_ENV === 'development' ? '' : `-production`;
   const tmpDirPath = `${pagesPath}/${tmpDirectory}${envAffix}`;
@@ -36,13 +38,12 @@ export default function(service) {
     absSrcPath,
     tmpDirPath,
     absTmpDirPath,
-    absLayoutPath,
     absRouterJSPath: join(absTmpDirPath, 'router.js'),
     absLibraryJSPath: join(absTmpDirPath, `${libraryName}.js`),
     absRegisterSWJSPath: join(absTmpDirPath, 'registerServiceWorker.js'),
     absPageDocumentPath: join(absPagesPath, 'document.ejs'),
-    defaultEntryTplPath: template('entry.js'),
-    defaultRouterTplPath: template('router.js'),
+    defaultEntryTplPath: template('entry.js.tpl'),
+    defaultRouterTplPath: template('router.js.tpl'),
     defaultRegisterSWTplPath: template('registerServiceWorker.js'),
     defaultDocumentPath: template('document.ejs'),
   };

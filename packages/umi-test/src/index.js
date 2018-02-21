@@ -4,6 +4,8 @@ import { existsSync, statSync } from 'fs';
 
 const debug = require('debug')('umi-test');
 
+process.env.NODE_ENV = 'test';
+
 function test(path) {
   return existsSync(path) && statSync(path).isDirectory();
 }
@@ -33,7 +35,12 @@ export default function(opts = {}) {
     moduleFileExtensions: ['js', 'jsx', 'ts', 'tsx'],
     setupTestFrameworkScriptFile: require.resolve('./jasmine'),
     moduleNameMapper: {
-      '\\.(css|less|sass|scss)$': require.resolve('./styleMock'),
+      '\\.(css|less|sass|scss)$': require.resolve('identity-obj-proxy'),
+    },
+    globals: {
+      'ts-jest': {
+        useBabelrc: true,
+      },
     },
     ...(coverage
       ? {
@@ -56,7 +63,9 @@ export default function(opts = {}) {
       .runCLI(
         {
           watch,
-          testPathPattern: process.argv.slice(2).filter(arg => !arg.startsWith('-')),
+          testPathPattern: process.argv
+            .slice(2)
+            .filter(arg => !arg.startsWith('-')),
           config: JSON.stringify(config),
         },
         [cwd],
@@ -65,7 +74,11 @@ export default function(opts = {}) {
         debug(result);
         const { results } = result;
         // const success = results.every(result => result.success);
-        results.success ? resolve() : reject('jest failed');
+        if (results.success) {
+          resolve();
+        } else {
+          reject(new Error('Jest failed'));
+        }
       })
       .catch(e => {
         console.log(e);

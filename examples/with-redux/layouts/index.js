@@ -1,13 +1,30 @@
-import React from 'react';
-import { Provider } from 'react-redux';
-import { store } from '../store';
+import { Component } from 'react';
+import withRouter from 'umi/withRouter';
+import { connect } from 'react-redux';
 
-export default class Layout extends React.PureComponent {
+class Layout extends Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      isLoading: true,
+    };
+  }
+
+  componentWillMount() {
+    setTimeout(() => {
+      this.setState({
+        isLoading: false,
+      });
+    }, 1000);
+  }
+
   render() {
-    return (
-      <Provider store={store}>
-        <div>{this.props.children}</div>
-      </Provider>
-    );
+    if (this.state.isLoading) {
+      return <div>Loading...</div>;
+    } else {
+      return <div>{this.props.children}</div>;
+    }
   }
 }
+
+export default withRouter(connect()(Layout));

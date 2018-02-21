@@ -25,6 +25,7 @@ import { applyWebpackConfig } from './applyWebpackConfig';
 import readRc from './readRc';
 import { stripLastSlash } from './utils';
 
+const { TsConfigPathsPlugin } = require('awesome-typescript-loader'); // eslint-disable-line
 const debug = require('debug')('af-webpack:getConfig');
 
 if (process.env.DISABLE_TSLINT) {
@@ -47,7 +48,7 @@ export default function getConfig(opts = {}) {
     // https://github.com/facebookincubator/create-react-app/issues/2677
     ident: 'postcss',
     plugins: () => [
-      require('postcss-flexbugs-fixes'),
+      require('postcss-flexbugs-fixes'), // eslint-disable-line
       autoprefixer({
         browsers: opts.browserslist || defaultBrowsers,
         flexbox: 'no-2009',
@@ -59,7 +60,9 @@ export default function getConfig(opts = {}) {
     ? {}
     : {
         modules: true,
-        localIdentName: '[local]___[hash:base64:5]',
+        localIdentName: isDev
+          ? '[name]__[local]___[hash:base64:5]'
+          : '[local]___[hash:base64:5]',
       };
   const lessOptions = {
     modifyVars: theme,
@@ -248,7 +251,7 @@ export default function getConfig(opts = {}) {
   ];
   const babelUse = [
     {
-      loader: require('path').join(__dirname, 'debugLoader.js'),
+      loader: require('path').join(__dirname, 'debugLoader.js'), // eslint-disable-line
     },
     {
       loader: require.resolve('babel-loader'),
@@ -336,6 +339,7 @@ export default function getConfig(opts = {}) {
         '@babel/runtime': dirname(require.resolve('@babel/runtime/package')),
         ...opts.alias,
       },
+      plugins: [new TsConfigPathsPlugin()],
     },
     module: {
       rules: [
@@ -408,7 +412,8 @@ export default function getConfig(opts = {}) {
         ...(opts.extraBabelIncludes || []).map(include => {
           return {
             test: /\.(js|jsx)$/,
-            include: join(opts.cwd, include),
+            include:
+              typeof include === 'string' ? join(opts.cwd, include) : include,
             use: babelUse,
           };
         }),
@@ -508,15 +513,6 @@ export default function getConfig(opts = {}) {
           : {}),
         ...stringifyObject(opts.define || {}),
       }),
-      ...(process.env.ANALYZE
-        ? [
-            new BundleAnalyzerPlugin({
-              analyzerMode: 'server',
-              analyzerPort: process.env.ANALYZE_PORT || 8888,
-              openAnalyzer: true,
-            }),
-          ]
-        : []),
       ...(opts.html ? [new HTMLWebpackPlugin(opts.html)] : []),
       new CaseSensitivePathsPlugin(),
       new webpack.LoaderOptionsPlugin({
@@ -530,6 +526,15 @@ export default function getConfig(opts = {}) {
         : []),
       ...commonsPlugins,
       ...copyPlugins,
+      ...(process.env.ANALYZE
+        ? [
+            new BundleAnalyzerPlugin({
+              analyzerMode: 'server',
+              analyzerPort: process.env.ANALYZE_PORT || 8888,
+              openAnalyzer: true,
+            }),
+          ]
+        : []),
     ],
     externals: opts.externals,
     node: {
